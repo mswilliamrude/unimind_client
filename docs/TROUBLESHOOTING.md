@@ -91,6 +91,19 @@ Bastion leg is encrypted by Azure. The certificate is still pinned on first use 
 changed certificate is detected. To also verify the certificate chain, set `UNIMIND_CA_CERT` and
 `UNIMIND_TLS_SERVER_NAME`.
 
+### jLens shows plain, unstyled HTML (Times New Roman, stuck on "Loading...")
+Upgrade to 0.3.1 or later. Older Rust routers passed the Unimind edge's
+`Content-Security-Policy: default-src 'none'` through to the browser, which blocks all of jLens's
+scripts and styles.
+
+### Firefox: `SSL_ERROR_RX_RECORD_TOO_LONG` on jLens
+The local jLens proxy speaks plain HTTP (it's loopback only; the router itself uses TLS to Unimind).
+Use `http://127.0.0.1:18080/jlens`, not `https://`. If Firefox keeps switching to HTTPS, add an
+HTTPS-Only Mode exception for `http://127.0.0.1:18080`.
+
+### jLens says "not found (proxy only serves /jlens)"
+Only `/jlens...` is proxied. From 0.3.1, `/` and `/jlens/` redirect to `/jlens`.
+
 ### jLens shows "forbidden host"
 Open it as `http://127.0.0.1:18080/jlens` or `http://localhost:18080/jlens`. Other hostnames are
 rejected on purpose (DNS-rebinding protection).
