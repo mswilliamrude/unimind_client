@@ -1,0 +1,5 @@
+{
+  "server": "wss://unimind.example.internal/ws",
+  "UNIMIND_CA_CERT": "C:/Users/<you>/.unimind/unimind-ca.pem",
+  "UNIMIND_TLS_SERVER_NAME": "unimind.example.internal"
+}

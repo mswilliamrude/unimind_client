@@ -1,0 +1,39 @@
+flowchart TB
+  subgraph WS["User workstation"]
+    direction TB
+    HOST["AI tool<br/>OpenCode / Copilot CLI / VS Code / Claude Code"]
+    BROWSER["Web browser"]
+    subgraph RT["unimind-router (one process per AI-tool session)"]
+      direction TB
+      MCP["MCP stdio bridge<br/>JSON-RPC"]
+      SESS["WSLink session<br/>chat / file / socket-proxy / ping"]
+      AUTH["Token provider<br/>OAuth2 / Keycloak / Entra"]
+      RES["Resilience<br/>caches, write queue"]
+      JL["jLens proxy<br/>127.0.0.1:18080"]
+      TAB["Tablet<br/>127.0.0.1:random"]
+      SUP["Tunnel supervisor<br/>network gate + retry"]
+    end
+    AZ["az network bastion tunnel<br/>(only when no direct path)"]
+    LP(("local endpoint<br/>127.0.0.1:8443"))
+  end
+  IDP["Identity provider<br/>Entra ID / Keycloak / any OAuth2-OIDC"]
+  subgraph PATH["Connectivity (choose one)"]
+    DIRECT["Direct<br/>VPN / private network"]
+    BAS["Azure Bastion<br/>IP-based connect<br/>tunnel authenticated with Entra"]
+  end
+  UM(["Unimind<br/>TLS endpoint: /ws, /jlens, /health"])
+  HOST <-- "stdio JSON-RPC" --> MCP
+  BROWSER <-- "HTTP loopback" --> JL
+  BROWSER <-- "HTTP loopback" --> TAB
+  MCP --- SESS
+  MCP --- RES
+  SESS --- AUTH
+  AUTH -. "obtain / refresh token" .-> IDP
+  SUP -- "spawn / supervise" --> AZ
+  SESS -- "wss + Bearer token" --> LP
+  JL -- "https + Bearer token" --> LP
+  LP --- AZ
+  AZ == "Entra-authenticated tunnel" ==> BAS
+  BAS == "TLS (end to end)" ==> UM
+  SESS -. "or: wss://unimind-host/ws" .-> DIRECT
+  DIRECT -. "TLS (end to end)" .-> UM

@@ -1,0 +1,16 @@
+{
+  "server": "wss://127.0.0.1:8443/ws",
+  "tunnel": {
+    "enabled": true,
+    "mode": "bastion-ssh",
+    "subscription": "<subscription>",
+    "bastion_name": "<bastion>",
+    "bastion_resource_group": "<bastion-rg>",
+    "vm_name": "<jump vm>",
+    "vm_resource_group": "<vm-rg>",
+    "local_ssh_port": 12222,
+    "ssh_user": "<you>@<domain>",
+    "ssh_key": "~/.ssh/<key>",
+    "forwards": ["8443:<edge-private-ip>:443"]
+  }
+}

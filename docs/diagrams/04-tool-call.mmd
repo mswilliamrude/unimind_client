@@ -1,0 +1,21 @@
+sequenceDiagram
+  autonumber
+  participant H as AI tool
+  participant R as unimind-router
+  participant C as Local caches / queue
+  participant U as Unimind
+  H->>R: tools/call {name, arguments}
+  alt cacheable read and cache hit (identity-scoped)
+    R->>C: lookup
+    C-->>R: cached result
+    R-->>H: result
+  else connected
+    R->>U: WSLink H frame (JSON-RPC) over WSS
+    U->>U: authorize and execute
+    U-->>R: WSLink H frame (result)
+    R->>C: store (unclassified reads only, never errors)
+    R-->>H: result
+  else disconnected and a write
+    R->>C: enqueue with idempotency key
+    R-->>H: queued (replayed in order after reconnect)
+  end

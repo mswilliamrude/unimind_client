@@ -1,0 +1,10 @@
+flowchart LR
+  R["unimind-router"] -->|"L1 every 15s: WebSocket ping/pong"| E["WebSocket"]
+  R -->|"L2: WSLink P (ping) / W (pong) frame"| W["WSLink session"]
+  R -->|"L3: MCP ping JSON-RPC"| S["Unimind"]
+  E -.-> F{"3 consecutive failures<br/>on any layer?"}
+  W -.-> F
+  S -.-> F
+  F -->|yes| X["force reconnect<br/>(fail in-flight requests fast)"]
+  X --> T["tunnel check (gated)<br/>then WebSocket reconnect with backoff"]
+  F -->|no| OK["healthy, metrics updated"]

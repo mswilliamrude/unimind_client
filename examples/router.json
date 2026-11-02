@@ -1,0 +1,17 @@
+{
+  "server": "wss://127.0.0.1:8443/ws",
+  "ports": { "jlens": 18080, "tablet": "auto" },
+  "tunnel": {
+    "enabled": true,
+    "mode": "bastion-ip",
+    "subscription": "<subscription name or id>",
+    "bastion_name": "<bastion name>",
+    "bastion_resource_group": "<bastion resource group>",
+    "target_ip": "<unimind edge private ip>",
+    "forwards": ["8443:3389"],
+    "network_probe": "management.azure.com:443",
+    "retry_interval_s": 300,
+    "check_interval_s": 15,
+    "max_restarts_per_hour": 20
+  }
+}

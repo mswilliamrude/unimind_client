@@ -1,0 +1,17 @@
+flowchart LR
+  subgraph CL["unimind-router"]
+    direction TB
+    A1["MCP JSON-RPC 2.0<br/>tools/list, tools/call, ..."]
+    A2["WSLink frames<br/>H chat, O/D/C file, s/d/c/e/w socket, P/W ping"]
+    A3["WebSocket (binary)<br/>Authorization: Bearer token<br/>(OAuth2 / Keycloak / Entra)"]
+    A4["TLS 1.2/1.3 to the Unimind certificate"]
+    A1 --> A2 --> A3 --> A4
+  end
+  subgraph TN["Transport (one of)"]
+    direction TB
+    B1["Direct TCP<br/>VPN / private network"]
+    B2["Azure Bastion tunnel<br/>local port to Bastion to Unimind<br/>(Azure TLS channel, Entra-authenticated)"]
+  end
+  UM(["Unimind<br/>terminates TLS, validates the bearer token"])
+  A4 --> B1 --> UM
+  A4 --> B2 --> UM

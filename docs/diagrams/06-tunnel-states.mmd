@@ -1,0 +1,18 @@
+stateDiagram-v2
+  [*] --> starting: router start
+  starting --> up: forward port accepting
+  starting --> retry_wait: start failed
+  up --> recovering: az exited / port down or wedged / WS cannot reach server
+  state recovering <<choice>>
+  recovering --> waiting_network: network_probe fails
+  recovering --> attempt: probe ok and no retry pending
+  recovering --> retry_wait: probe ok and retry pending
+  waiting_network --> attempt: probe ok again (immediate)
+  waiting_network --> waiting_network: recheck every check_interval_s
+  attempt --> up: tunnel listening
+  attempt --> retry_wait: failed (next attempt in retry_interval_s, default 300s)
+  retry_wait --> attempt: interval elapsed
+  retry_wait --> waiting_network: probe fails
+  attempt --> throttled: max_restarts_per_hour used
+  throttled --> attempt: every retry_interval_s (never gives up)
+  up --> [*]: router exits (tunnel tree killed)

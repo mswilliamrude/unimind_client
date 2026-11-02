@@ -1,0 +1,37 @@
+sequenceDiagram
+  autonumber
+  participant H as AI tool (host)
+  participant R as unimind-router
+  participant I as Identity provider (Entra / Keycloak / OAuth2)
+  participant A as az CLI
+  participant B as Azure Bastion
+  participant U as Unimind
+  H->>R: spawn process (stdio)
+  R->>R: load router.json
+  H->>R: initialize
+  R-->>H: initialize result (answered locally, no wait)
+  opt no direct connectivity: built-in Bastion tunnel
+    R->>R: network probe (DNS + TCP to Azure)
+    R->>A: az network bastion tunnel --target-ip-address UNIMIND --resource-port 3389 --port 8443
+    A->>B: open tunnel (Entra identity of az login)
+    B-->>A: tunnel ready
+    R->>R: local endpoint accepting = tunnel UP
+  end
+  alt OAuth2 / Keycloak token configured
+    R->>R: read token file or env (re-read on each use, rotated externally)
+  else Entra
+    R->>A: az account get-access-token (or MSAL / managed identity)
+    A->>I: token request
+    I-->>A: JWT
+    A-->>R: JWT
+  end
+  R->>U: TLS + GET /ws Upgrade, Authorization Bearer token (via tunnel or direct)
+  U->>U: validate token, authorize the user
+  U-->>R: 101 Switching Protocols
+  R->>U: WSLink H: initialize, session setup (reconnect, credential handoff)
+  U-->>R: ready
+  R->>R: Ready, start L1/L2/L3 liveness probes
+  H->>R: tools/list
+  R->>U: H: tools/list
+  U-->>R: tools
+  R-->>H: tools (secret-bearing tools/args removed)

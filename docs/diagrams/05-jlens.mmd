@@ -1,0 +1,13 @@
+sequenceDiagram
+  autonumber
+  participant W as Browser
+  participant J as Router jLens proxy (127.0.0.1:18080)
+  participant U as Unimind
+  W->>J: GET http://127.0.0.1:18080/jlens/...
+  J->>J: Host must be loopback:18080 (DNS-rebinding defence)
+  J->>J: Origin/Referer required for non-GET (CSRF), path limited to /jlens
+  J->>J: get bearer token silently (OAuth2 / Keycloak / Entra, never prompts)
+  J->>U: HTTPS (via tunnel or direct), Authorization Bearer token
+  U->>U: validate token, authorize the user
+  U-->>J: response (streamed / chunked)
+  J-->>W: piped byte-for-byte
