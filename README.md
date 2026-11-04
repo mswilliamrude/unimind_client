@@ -9,7 +9,7 @@ Your tool starts it as a local MCP server over stdio. The router then:
 - connects directly, or opens and maintains an Azure Bastion tunnel when there's no direct path (no SSH or VPN needed)
 - pins the server's TLS certificate on first use and refuses connections if it changes unexpectedly
 - reconnects automatically after sleep, network loss or server restarts
-- serves **jLens** (the knowledge explorer) at `http://127.0.0.1:18080/jlens`
+- serves **jLens** (the knowledge explorer) at `http://127.0.0.1:18080/jlens`; with several IDE sessions open, each gets its own port (18081, 18082, …) and the `router_info` tool tells you which one is yours
 - serves a per-session **tablet** on a local port for interfaces Unimind generates
 
 It's one static file with no runtime dependencies.

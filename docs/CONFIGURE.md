@@ -51,12 +51,20 @@ Ready-to-edit files are in [`../examples/`](../examples/).
 ### jLens
 
 jLens is Unimind's browser UI. The router serves it on `127.0.0.1` only and adds
-your Entra token to each request, so the server decides what you're allowed to see. Only one
-router per machine can own the port. The others share it, and one of them takes over if the owner
-exits. Health and diagnostics:
+your Entra token to each request, so the server decides what you're allowed to see.
 
-- `http://127.0.0.1:18080/__router/health`: returns `ok`
-- `http://127.0.0.1:18080/__router/metrics`: connection, tunnel, liveness (L1 WebSocket / L2 WSLink / L3 MCP), ports, caches
+Every router (one per IDE session) gets **its own** jLens port: the configured one (`18080`) if it's
+free, otherwise the next free port (`18081`, `18082`, … up to +19). To find the one that belongs to
+your session:
+
+- ask your AI tool for the jLens URL: the router adds a `router_info` tool, and its startup
+  instructions name this session's jLens URL;
+- or check the router log: `jlens auth-proxy LISTENING on http://127.0.0.1:<port>/jlens`.
+
+Health and diagnostics (on that session's port):
+
+- `http://127.0.0.1:<port>/__router/health`: returns `ok`
+- `http://127.0.0.1:<port>/__router/metrics`: connection, tunnel, liveness (L1 WebSocket / L2 WSLink / L3 MCP), ports (`jlens_url`, `tablet_url`), caches
 
 ### Tablet
 
@@ -293,6 +301,8 @@ All of these can also go in `router.json` as `"NAME": "value"`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `UNIMIND_UPLOAD_ROOTS` | cwd, workspace, temp | Extra folders (`;` or `,` separated) the AI may upload files from. Secrets folders (`.ssh`, `.azure`, keys, `.env`) are always refused. |
+| `UNIMIND_LOCAL_API_TOOLS` | `kg_add,checkpoint_save,ingest_transcript,cache_file,report_usage` | Tools that same-user local companions (the OpenCode plugins) may call through the router's local tool API, `POST /__router/tools/call` on the jLens port. Calls need the token from the discovery file and are refused from browsers (`Origin` header). `off` disables the API. Used by the Unimind OpenCode plugins. |
+| `UNIMIND_LOCAL_API_FILE` | `~/.unimind/run/local-api-<pid>.json` (one per router) | Discovery file (URL + token, user-only). Each router writes its own and removes it on exit; files of routers that died are removed by the next router to start. Setting this pins one fixed file instead. |
 | `UNIMIND_UPLOAD_ALLOW_ANY` | `0` | Lift the upload folder restriction (not recommended) |
 | `UNIMIND_RECV_DIR` | `~/.opencode/workspace` | Where server-pushed files land |
 | `UNIMIND_LOCAL_BACKUP_DIR` | `~/.unimind/backups` | Where server backups are delivered |
