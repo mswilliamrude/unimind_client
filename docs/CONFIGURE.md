@@ -198,6 +198,47 @@ forget a pin, delete its entry under `tls_pins`; the next connection then pins o
 
 ## Sign-in (bearer token for Unimind)
 
+### Native Keycloak device sign-in and separate recovery router (0.4.0+)
+
+Set `UNIMIND_AUTH_MODE=oidc-device` on the normal MCP router process and
+`UNIMIND_OIDC_ISSUER=https://<keycloak-host>/realms/<realm>`. The public OAuth client id
+defaults to `unimind` (`UNIMIND_OIDC_CLIENT_ID`); it is unrelated to `--client-id`.
+The router displays a device verification URL and user code on stderr and in its
+router log. While sign-in is pending it answers the MCP host immediately with two
+local tools, `router_info` and `unimind_sign_in_status` (the latter returns the
+verification link and code), and sends `notifications/tools/list_changed` once
+connected so the host reloads the full tool list. On Linux, an approved session is shared by routers running as the same
+OS user through `~/.unimind/config/auth.json` (owner-only directory/file, serialized
+by `auth.lock`). Each router keeps its own WebSocket, rereads the shared session
+before use, refreshes before expiry and reconnects with a new access token. A
+router restart reuses the saved session while its refresh token is still valid;
+Keycloak's maximum session lifetime may require a new device approval. Do not
+copy `auth.json` into a shared project or another user's home. This shared-file
+mode has not yet been validated on Windows, where cross-process locking is not
+implemented. An OIDC error
+never selects Entra or a static token in this mode. If authentication is
+unavailable, metrics and `router_info` remain available locally.
+
+For a separate operator process set `UNIMIND_AUTH_MODE=developer-key` and
+`UNIMIND_DEVELOPER_KEY_FILE` to a protected file containing **only** the key.
+On Unix the file must be regular and owner-only (`chmod 600`); no symlinks.
+The operator process requires WSS and either a configured CA or an already
+established TLS pin. Do not put this path or the key in shared `router.json`;
+set them on the dedicated MCP server entry. This mode does not read OAuth,
+Entra or `UNIMIND_WS_TOKEN`, and does not drain normal-session queued writes.
+Both explicit modes bypass legacy local read caches and offline write queues
+so one mode cannot replay another mode's data or writes.
+The operator router does not publish the OpenCode plugin local API, so
+plugins cannot accidentally send background tool calls under its identity.
+`router_info` and `/__router/metrics` report `auth_mode` and
+`connection_auth_source` for the *current* WebSocket plus `oidc_state`; `auth_source` is the
+most recent token lookup (including jLens). The two processes each have their
+own jLens port. Your Unimind edge must independently accept both credential
+types before this provides a recovery route.
+
+`legacy` remains the default for existing configurations and retains the
+fallback chain below. The new modes must be selected explicitly.
+
 Every connection to Unimind carries `Authorization: Bearer <token>`, and Unimind validates it. The
 router takes the first available token from this list:
 
@@ -286,6 +327,10 @@ All of these can also go in `router.json` as `"NAME": "value"`.
 
 | Variable | Meaning |
 |---|---|
+| `UNIMIND_AUTH_MODE` | `legacy` (default: the fallback chain above), `oidc-device` (Keycloak device sign-in only) or `developer-key` (operator key file only). Same as `--auth-mode`. |
+| `UNIMIND_OIDC_ISSUER` | Keycloak realm issuer URL for `oidc-device`, e.g. `https://<keycloak-host>/realms/<realm>` (HTTPS required) |
+| `UNIMIND_OIDC_CLIENT_ID` | Public OAuth client for `oidc-device` (default `unimind`) |
+| `UNIMIND_DEVELOPER_KEY_FILE` | Owner-only file holding the operator key for `developer-key` |
 | `UNIMIND_OAUTH_TOKEN_FILE`, `KEYCLOAK_TOKEN_FILE` | OAuth2/Keycloak access-token file (re-read on every use) |
 | `UNIMIND_OAUTH_TOKEN`, `KEYCLOAK_ACCESS_TOKEN` | OAuth2/Keycloak access token |
 | `UNIMIND_ENTRA_USE_AZ` | `0` = don't use the Azure CLI |

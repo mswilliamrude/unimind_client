@@ -19,6 +19,46 @@ same tool don't collide.
 
 ## OpenCode
 
+### Parallel migration sessions (router built with auth modes)
+
+Keep the existing MCP entry until both credentials have been validated against
+an isolated edge. Two distinct entries can run side by side:
+
+```jsonc
+"mcp": {
+  "unimind_oidc": {
+    "type": "local",
+    "command": ["/path/to/unimind-router", "--client-id", "opencode-oidc"],
+    "environment": {
+      "UNIMIND_AUTH_MODE": "oidc-device",
+      "UNIMIND_OIDC_ISSUER": "https://<keycloak-host>/realms/<realm>",
+      "UNIMIND_LOG_FILE": "/path/to/oidc-router.log"
+    },
+    "enabled": true, "timeout": 300000
+  },
+  "unimind_recovery": {
+    "type": "local",
+    "command": ["/path/to/unimind-router", "--client-id", "opencode-recovery"],
+    "environment": {
+      "UNIMIND_AUTH_MODE": "developer-key",
+      "UNIMIND_DEVELOPER_KEY_FILE": "/path/to/protected/operator-key",
+      "UNIMIND_LOG_FILE": "/path/to/recovery-router.log"
+    },
+    "enabled": true, "timeout": 300000
+  }
+}
+```
+
+The recovery router needs `UNIMIND_CA_CERT` or a previously pinned WSS edge.
+Both entries use the same server/tunnel settings in `router.json`; neither
+entry contains a credential. Each router reports its own jLens URL through
+`router_info`. OIDC device approval appears in the OIDC router's log; do not
+copy the private device code, access token or operator key into OpenCode config.
+
+This example requires router 0.4.0 or later. In OpenCode, ask for
+`unimind_sign_in_status` to get the sign-in link; the Unimind tools load by
+themselves once you are signed in and authorized.
+
 `~/.config/opencode/opencode.json` (or `opencode.jsonc`):
 
 ```json
@@ -103,8 +143,8 @@ That's fine:
 - **One tunnel serves all of them.** The first router to start brings the Bastion tunnel up. The
   others see the healthy port and use it (`adopt_existing`). If the owning session closes, the
   next health check (≤15 s) in another session restarts the tunnel.
-- **jLens** (18080) is served by one router and shared. **Tablets** get a separate random port
-  per session.
+- **jLens** uses a separate port per router (18080, 18081, …); **tablets** also
+  get a separate random port per session.
 
 ## Linux
 
