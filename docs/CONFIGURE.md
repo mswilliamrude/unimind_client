@@ -210,14 +210,34 @@ verification link and code), and sends `notifications/tools/list_changed` once
 connected so the host reloads the full tool list. On Linux, an approved session is shared by routers running as the same
 OS user through `~/.unimind/config/auth.json` (owner-only directory/file, serialized
 by `auth.lock`). Each router keeps its own WebSocket, rereads the shared session
-before use, refreshes before expiry and reconnects with a new access token. A
-router restart reuses the saved session while its refresh token is still valid;
-Keycloak's maximum session lifetime may require a new device approval. Do not
+before use, refreshes before expiry and reconnects with a new access token. Device sign-in requests
+`openid offline_access`; if Keycloak grants offline access, the refresh session can survive
+the normal SSO idle/max deadlines. `unimind_sign_in_status` reports whether offline access
+was granted, the last refresh and any reported refresh expiry. A router also checks the
+saved refresh deadline every 15 seconds even without MCP traffic or a WebSocket connection;
+while at least one router is running, it renews before a reported deadline, or after about
+24 hours for offline tokens without a fixed deadline. A stopped router cannot keep the
+session alive indefinitely; Keycloak can still revoke an offline session or enforce its
+own offline idle/max limits. If offline access is not granted, normal SSO idle/max limits
+apply and the router logs a warning. A restart reuses the saved session while valid. Do not
 copy `auth.json` into a shared project or another user's home. This shared-file
 mode has not yet been validated on Windows, where cross-process locking is not
 implemented. An OIDC error
 never selects Entra or a static token in this mode. If authentication is
 unavailable, metrics and `router_info` remain available locally.
+
+If the session is revoked or expires, call `unimind_sign_in_status` to get a new device
+code; approval is required again. After explicit sign-out, pass `{"sign_in":true}`
+to that tool to intentionally sign in again. For explicit sign-out, stop other routers for this OS
+user, then run `unimind-router --auth-mode oidc-device --oidc-issuer <realm-issuer> --sign-out`.
+This revokes the refresh token at Keycloak and removes the local session; if Keycloak is
+unreachable, local sign-out still happens and the command reports the failed revocation.
+The saved session is a long-lived credential: protect `~/.unimind/config/auth.json` (0600)
+and its containing directory (0700). You can also revoke offline sessions in the Keycloak
+account console under applications/consents, or ask an administrator to end the user's
+session or consent. Revoking a refresh token does not retroactively revoke a WebSocket
+handshake or an already-issued access token; the router closes its own socket on sign-out,
+and the server applies its own token expiry and authorization checks.
 
 For a separate operator process set `UNIMIND_AUTH_MODE=developer-key` and
 `UNIMIND_DEVELOPER_KEY_FILE` to a protected file containing **only** the key.
@@ -330,6 +350,9 @@ All of these can also go in `router.json` as `"NAME": "value"`.
 | `UNIMIND_AUTH_MODE` | `legacy` (default: the fallback chain above), `oidc-device` (Keycloak device sign-in only) or `developer-key` (operator key file only). Same as `--auth-mode`. |
 | `UNIMIND_OIDC_ISSUER` | Keycloak realm issuer URL for `oidc-device`, e.g. `https://<keycloak-host>/realms/<realm>` (HTTPS required) |
 | `UNIMIND_OIDC_CLIENT_ID` | Public OAuth client for `oidc-device` (default `unimind`) |
+| `UNIMIND_WORKSPACE_ROOT` | Directory (or comma-separated list of directories) below which the server may read files from this workstation (`client/read_file`). Same as `--workspace-root`. Never defaults to the working directory; with no root configured every server read request is refused immediately. |
+| `UNIMIND_REVERSE_READ_ROOTS` | Extra allowed roots for server reads: comma-separated, or separated like `PATH` (`:` on Linux/macOS); both may be mixed and spaces are trimmed. Paths containing a comma are not supported. Missing directories and `/` are ignored. |
+| `UNIMIND_REVERSE_READ_MAX_BYTES` | Size cap for one server read (default 2 MiB). Only regular UTF-8 files are returned; symlinks in any path component, directories, FIFOs and other special files are refused. Not supported on Windows (refused). |
 | `UNIMIND_DEVELOPER_KEY_FILE` | Owner-only file holding the operator key for `developer-key` |
 | `UNIMIND_OAUTH_TOKEN_FILE`, `KEYCLOAK_TOKEN_FILE` | OAuth2/Keycloak access-token file (re-read on every use) |
 | `UNIMIND_OAUTH_TOKEN`, `KEYCLOAK_ACCESS_TOKEN` | OAuth2/Keycloak access token |

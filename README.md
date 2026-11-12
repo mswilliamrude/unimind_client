@@ -6,7 +6,8 @@
 Your tool starts it as a local MCP server over stdio. The router then:
 
 - authenticates you to Unimind with **Entra ID**, **Keycloak** or any **OAuth2/OIDC** token, with no passwords in config files
-- signs you in with a **Keycloak device code** (`oidc-device` mode, 0.4.0+): approve once in a browser, and every router you run as the same user reuses that sign-in; inside your IDE, the `unimind_sign_in_status` tool gives you the link (shared sign-in: Linux; not yet Windows)
+- signs you in with a **Keycloak device code** (`oidc-device` mode, 0.4.0+): approve once in a browser, and every router you run as the same user reuses that sign-in; inside your IDE, the `unimind_sign_in_status` tool gives you the link (shared sign-in: Linux; not yet Windows). From 0.4.1 it asks for an offline session, so you stay signed in across idle periods and restarts; `--sign-out` revokes it
+- lets the server read files on your machine only below folders you explicitly allow (`UNIMIND_WORKSPACE_ROOT`, 0.4.2+); with none set, every such request is refused
 - can run a separate **operator recovery** session from a protected key file (`developer-key` mode)
 - connects directly, or opens and maintains an Azure Bastion tunnel when there's no direct path (no SSH or VPN needed)
 - pins the server's TLS certificate on first use and refuses connections if it changes unexpectedly
