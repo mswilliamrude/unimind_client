@@ -29,6 +29,8 @@ Get the binary for your platform from the [latest release](https://github.com/ms
 | macOS 11.7+ Apple Silicon | `unimind-router-macos-aarch64` |
 | macOS 11.7+ Intel | `unimind-router-macos-x86_64` |
 
+Optional add-ons (0.4.3+): `unimind-plugins-opencode-<version>.zip` holds the OpenCode plugins (installer: `node install.mjs`, Node.js 22+). `unimind-plugins-copilot-<version>.zip` holds the always-on instructions for GitHub Copilot. Each zip has a README.
+
 **Verify the download** against `SHA256SUMS` from the same release:
 
 ```bash
