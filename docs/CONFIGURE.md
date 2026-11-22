@@ -289,25 +289,124 @@ logs. The connect log shows which source was used, e.g. `Auth ready (0.0s) — t
 > from Keycloak/OAuth2. If Unimind is reachable directly (VPN or private network), leave `tunnel`
 > out and Entra isn't needed at all.
 
-### GitHub / Copilot token
+### Credential handoff
 
-Some Unimind features use your GitHub Copilot entitlement. The router
-finds your token automatically and hands it to the server directly. It's never exposed to the
-AI model. Lookup order depends on the client id prefix (`opencode…`, `copilot…`, `vscode…`) and
-can be overridden:
+**What this is.** Unimind runs council members and other server-side sub-agents on your behalf.
+They call model and search providers (GitHub Copilot, OpenAI, xAI, Perplexity, Brave) using
+**your** credentials, which exist only on your machine. The router hands them to the server for
+the lifetime of the connection. This is separate from your Unimind sign-in (Keycloak, Entra or
+the developer key), which authenticates you to Unimind and is never sent to providers.
 
-```json
-"UNIMIND_GITHUB_TOKEN_SOURCES": "env,opencode,copilot-cli,copilot-auth-json,gh-keychain,vscode,gh-cli"
+**What can be handed off.** Nothing else is ever sent. Each row is one credential *family*:
+
+| Family (argument name) | Where the router reads it | Used by the server for |
+|---|---|---|
+| `copilot_token` | GitHub/Copilot OAuth token, looked up in the sources below | Council members calling the Copilot API |
+| `openai_api_key` | `OPENAI_API_KEY` | OpenAI model calls |
+| `xai_api_key` | `XAI_API_KEY` | Grok (xAI) calls |
+| `perplexity_api_key` | `PERPLEXITY_API_KEY`, else `PERPLEXITY_KEY` | Perplexity research |
+| `brave_api_key` | `BRAVE_API_KEY`, else `BRAVE_KEY` | Brave web search |
+| `ghost_brave_key` | `GHOST_BRAVE_KEY` | Brave search through the browser sidecar |
+| `ghost_perplexity_key` | `GHOST_PERPLEXITY_KEY` | Perplexity search through the browser sidecar |
+
+An empty variable counts as unset. The server mirrors the plain and "ghost" Brave and Perplexity
+slots into each other, so allowing only `brave_api_key` still fills both server-side.
+
+**Where the Copilot token is looked up**, in this order (it depends on the start of `--client-id`):
+
+| `--client-id` starts with | Order |
+|---|---|
+| `copilot` | env, copilot-cli, copilot-auth-json, gh-keychain, gh-cli, opencode, vscode |
+| `opencode` | env, opencode, copilot-cli, copilot-auth-json, gh-keychain, gh-cli, vscode |
+| `vscode` | env, vscode, copilot-cli, gh-keychain, gh-cli, opencode |
+| anything else | env, opencode, copilot-cli, copilot-auth-json, gh-keychain, vscode, gh-cli |
+
+- `env`: `COPILOT_GITHUB_TOKEN`, `COPILOT_TOKEN`, `GITHUB_COPILOT_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`.
+- `opencode`: OpenCode's `auth.json` (`~/.local/share/opencode/`, `$XDG_DATA_HOME/opencode/` or `%LOCALAPPDATA%\opencode\`).
+- `copilot-auth-json`: `~/.copilot/auth.json`. `vscode`: `hosts.json` / `apps.json` under `github-copilot` config folders.
+- `copilot-cli`, `gh-keychain`: Windows Credential Manager entries (Windows only).
+- `gh-cli`: the output of `gh auth token --hostname github.com` (15-second limit).
+
+The router only reads these locations; it never writes to them. A value must be 20 to 512
+characters with no spaces or control characters, otherwise it is ignored.
+
+**When it is sent.** After every successful connection, so again after each reconnect and server
+restart, and once more (at most once a minute) if the server reports a missing Copilot token.
+If nothing is found, nothing is sent. This happens in every sign-in mode.
+
+#### Controls
+
+| Flag | Environment variable | Meaning |
+|---|---|---|
+| `--forward-credentials <policy>` | `UNIMIND_FORWARD_CREDENTIALS` | `auto` (default): every family it finds. `none`: nothing is read or sent. Or a comma list of families, e.g. `openai_api_key,brave_api_key`. |
+| `--github-token-sources <list>` | `UNIMIND_GITHUB_TOKEN_SOURCES` | Comma list that replaces the Copilot lookup order above: `env`, `opencode`, `copilot-cli`, `gh-keychain`, `copilot-auth-json`, `vscode`, `gh-cli`. |
+
+- A family that the policy does not allow is **not read at all**: no credential file is opened
+  and `gh` is not run for it.
+- An unknown family or source name, or mixing `none`/`auto` with other values, stops the router
+  at startup with a message. A typo never silently forwards or withholds the wrong thing.
+- The flag wins over the environment variable. The variable names can also go in `router.json`.
+
+```bash
+# Hand off nothing:
+unimind-router --forward-credentials none
+
+# Only the Copilot token, and only if you put it in the environment yourself:
+unimind-router --forward-credentials copilot_token --github-token-sources env
+
+# Only search keys:
+unimind-router --forward-credentials brave_api_key,perplexity_api_key
 ```
 
-`env` means the `GH_TOKEN` or `GITHUB_TOKEN` environment variable.
+#### How the credentials are protected
 
-### Optional third-party API keys
+On your machine (the router):
 
-If you set `OPENAI_API_KEY`, `XAI_API_KEY`, `PERPLEXITY_API_KEY` or `BRAVE_API_KEY` in the
-router's environment, it forwards them to your server session the same hidden way. They're used
-for that session's web research and model calls, and are never shown to the AI model. Prefer
-setting them as user environment variables rather than pasting them into a tool's config file.
+- **Only over the authenticated connection.** They go to the server you configured, over the
+  TLS-verified WSLink session, as a router-private request. Its reply is consumed by the router.
+- **Hidden from the IDE and the model.** The `provide_credentials` tool is removed from the tool
+  list, a model attempt to call it is refused locally and nothing is sent, and the Copilot,
+  OpenAI, xAI and Perplexity key arguments are stripped from other tools' schemas. Credential
+  values never appear on stdout (a harness test checks this).
+- **Never logged.** Logs show only family names and the source label (for example
+  `Injected credentials: copilot_token, openai_api_key` and `from source 'opencode'`).
+- **Not stored by the router.** No queue, cache or telemetry holds them. They are read from
+  their original location each time, and `router_info` reports only names.
+- **Not passed to helper programs.** The `az` and `gh` programs the router starts get a scrubbed
+  environment: `UNIMIND_PASSWORD`, `UNIMIND_WS_TOKEN`, every `*_API_KEY` variable and the Copilot
+  token variables are removed. `GH_TOKEN` and `GITHUB_TOKEN` are kept on purpose, because `gh`
+  may need them.
+- **Not part of your sign-in.** Keycloak tokens (`~/.unimind/config/auth.json`), the developer
+  key and TLS keys are never included in a credential handoff.
+
+On the server (as described by the router protocol contract, Section 10; check your server version):
+
+- They are held **in memory only**, tied to the exact connection that provided them, and used
+  only for that session's sub-agents and provider calls.
+- They are cleared when the connection closes, and are not written to the knowledge base or any
+  database. The router provides them again after a reconnect.
+
+#### What this does not protect
+
+- **Plaintext configuration.** If you put API keys in an MCP entry's `environment` (for example
+  in `opencode.json`), they sit in that file in clear text. Make the file owner-only, or set the
+  variables from your secrets manager or a launcher script. The router has no key-file option for
+  provider API keys.
+- **The server is trusted with them.** While you are connected, whoever operates the Unimind server
+  or its process memory can use them. Treat the server like any service you give an API key to.
+- **They spend your quota.** Councils and sub-agents act with your credentials and count against
+  your provider plan and cost. To cut access, turn the forwarding off and rotate the key at the
+  provider; clearing them server-side only happens on disconnect.
+- **The default forwards everything it finds, with no per-family prompt.** That is looser than the
+  protocol contract, which says to forward nothing by default. Use `none` or an explicit list to
+  match the contract; a future release may make forwarding opt-in.
+
+#### Checking what is handed off
+
+- Ask for **`router_info`**: `credential_forwarding` shows the policy, when the last handoff was,
+  and which family names were sent. Values are never shown.
+- The router log has `Injected credentials: <names>`, or `Credential forwarding is off` when disabled.
+- The server logs `Session credentials stored (volatile): [<names>]`.
 
 ---
 
@@ -362,7 +461,8 @@ All of these can also go in `router.json` as `"NAME": "value"`.
 | `UNIMIND_ENTRA_TENANT`, `UNIMIND_ENTRA_CLIENT_ID`, `UNIMIND_TOKEN_CACHE` | MSAL sign-in |
 | `UNIMIND_TOKEN_REFRESH_SKEW_SEC` | Refresh this many seconds before expiry |
 | `UNIMIND_USERNAME` + `UNIMIND_PASSWORD`, `UNIMIND_WS_TOKEN` | Non-Entra fallbacks. Put the password in the environment only, never on the command line. |
-| `UNIMIND_GITHUB_TOKEN_SOURCES` | GitHub token lookup order (see above) |
+| `UNIMIND_GITHUB_TOKEN_SOURCES` | GitHub token lookup order; same as `--github-token-sources` (see *Credential handoff*) |
+| `UNIMIND_FORWARD_CREDENTIALS` | Which credentials are handed to the server: `auto` (default), `none`, or a comma list; same as `--forward-credentials` (see *Credential handoff*) |
 
 ### Files, uploads and forwarding
 
