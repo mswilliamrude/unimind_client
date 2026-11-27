@@ -191,6 +191,15 @@ connection is unverified (`--insecure`), and from then on the pin verifies the s
 If the presented fingerprint does **not** match, don't re-pin. Something is intercepting the
 connection, or the address points at a different server. Report it.
 
+**Track record (0.4.6+).** When a pin is replaced, the old one is moved into `tls_pin_history`
+(newest first, at most 20 per host) with `"active": false`, `retired_at` and its original `method`;
+the current pin carries `"active": true`. History is a record only and is never trusted. Routers
+from before 0.4.6 ignore the new key and the new field and read the per-host entry exactly as before.
+
+```json
+"tls_pin_history": { "host:443": [ {"sha256": "AA:…", "pinned_at": "…", "retired_at": "…", "method": "tofu", "active": false} ] }
+```
+
 To turn pinning off, set `"tls_pinning": false` or `UNIMIND_TLS_PIN=0`. This isn't recommended. To
 forget a pin, delete its entry under `tls_pins`; the next connection then pins on first use again.
 
@@ -289,6 +298,72 @@ logs. The connect log shows which source was used, e.g. `Auth ready (0.0s) — t
 > from Keycloak/OAuth2. If Unimind is reachable directly (VPN or private network), leave `tunnel`
 > out and Entra isn't needed at all.
 
+### Client id and install id
+
+Every time the router starts it generates a random UUID (version 4), its **install id**, and keeps it
+for as long as the process runs. It does not change when the connection drops and comes back, and a
+router that is started again gets a new one.
+
+The server is told two things on every connection:
+
+| Header | Value | Example |
+|---|---|---|
+| `X-Client-ID` | `<install-uuid>:<your client id>` | `3f1c9a52-7e0b-4d2a-9c1e-5b8a6d0e4f17:opencode` |
+| `X-Install-ID` | the UUID alone | `3f1c9a52-7e0b-4d2a-9c1e-5b8a6d0e4f17` |
+
+`<your client id>` is whatever you pass as `--client-id` / `UNIMIND_CLIENT_ID`, exactly as you wrote it
+(leading and trailing spaces are trimmed; it may not be empty or contain control characters). The router
+no longer appends a process id and random suffix, because the UUID already makes each run unique.
+`--client-id-exact` / `UNIMIND_CLIENT_ID_EXACT` is still accepted so existing launchers keep working, but
+it has no effect.
+
+The separate `X-Install-ID` lets the server record the UUID on every connection and on every usage
+record from that connection, including usage reported by plugins that know nothing about it.
+
+Locally the router keeps using your own client id (without the UUID) to choose the GitHub-token lookup
+order and the OpenCode queue folder. `router_info` shows `client_id` (the full value), `install_id` and
+`client_id_base` (your value).
+
+### Changes to `router.json` and the authorization file
+
+The router never keeps `router.json` or the shared authorization file (`~/.unimind/config/auth.json`)
+open. It only checks their timestamps, size, owner and permissions every 2 seconds (set
+`UNIMIND_WATCH_INTERVAL_MS`, 100 to 60000). When one changes and has stopped changing, it opens the
+file, reads it and closes it again. `router_info` shows `file_watch` for both files, including
+`"held_open": false`.
+
+**`router.json`.** If the connection settings change, the router checks them and reconnects with the
+new ones. It keeps the same install UUID, so the server sees the same router moving, not a new one.
+
+| Setting in `router.json` | When the file changes |
+|---|---|
+| `server`, `UNIMIND_SERVER` | Applied by reconnecting. A different server is also pinned afresh (first use). |
+| `UNIMIND_CA_CERT`, `UNIMIND_TLS_SERVER_NAME`, `UNIMIND_CLIENT_CERT`, `UNIMIND_CLIENT_KEY` | Applied by reconnecting. |
+| Everything else (ports, tunnel, project, auth mode, ...) | Reported as needing a router restart; not applied. |
+| Anything also set on the command line or in the environment | The command line and environment still win, exactly as at startup. The change is reported as ignored. |
+
+A change is ignored, with a warning, and the router keeps its previous settings if the file is not
+valid JSON, is a symbolic link, is not owned by you, is writable by everyone, is larger than 256 KiB,
+or the new settings fail the same safety checks as at startup (for example a missing CA file, plain
+`ws://` to a remote host in a sign-in mode, or `developer-key` mode without a CA or TLS pin for the new
+server). The router's own TLS-pin writes to this file do not trigger a reconnect.
+
+**The authorization file.** The router tells you when it changes in a way that matters:
+
+| Change | Alert |
+|---|---|
+| A different account (first 8 characters of the account id are shown) | warning |
+| The file was removed, or you were signed out | warning |
+| The file became unusable or unsafe (for example wrong permissions) | warning |
+| The sign-in was replaced by another router or process (same account) | info |
+| A new sign-in you just completed in this router, or the file is usable again | info |
+| A routine token refresh (same account, same sign-in) | none |
+
+Alerts go to the router log, to the IDE as a log notification (`notifications/message`, after the IDE
+has initialised), and to the `alerts` list in `router_info` and `unimind_sign_in_status`. They never
+contain a token. The router does not change its own sign-in because of an edit; it keeps using what it
+has until it ends or refreshes.
+
 ### Credential handoff
 
 **What this is.** Unimind runs council members and other server-side sub-agents on your behalf.
@@ -338,7 +413,8 @@ If nothing is found, nothing is sent. This happens in every sign-in mode.
 
 | Flag | Environment variable | Meaning |
 |---|---|---|
-| `--forward-credentials <policy>` | `UNIMIND_FORWARD_CREDENTIALS` | `auto` (default): every family it finds. `none`: nothing is read or sent. Or a comma list of families, e.g. `openai_api_key,brave_api_key`. |
+| `--forward-credentials <policy>` | `UNIMIND_WATCH_INTERVAL_MS` | How often (milliseconds, default 2000) the router checks `router.json` and the authorization file for changes. See *Changes to `router.json` and the authorization file*. |
+| `UNIMIND_FORWARD_CREDENTIALS` | `auto` (default): every family it finds. `none`: nothing is read or sent. Or a comma list of families, e.g. `openai_api_key,brave_api_key`. |
 | `--github-token-sources <list>` | `UNIMIND_GITHUB_TOKEN_SOURCES` | Comma list that replaces the Copilot lookup order above: `env`, `opencode`, `copilot-cli`, `gh-keychain`, `copilot-auth-json`, `vscode`, `gh-cli`. |
 
 - A family that the policy does not allow is **not read at all**: no credential file is opened
@@ -410,6 +486,29 @@ On the server (as described by the router protocol contract, Section 10; check y
 
 ---
 
+## Service identity: `dynwarden-device`
+
+For a service that has no person to sign in (a coding agent, a build host), the router signs in as a dynwarden device with its **own private key**.
+
+```
+UNIMIND_AUTH_MODE=dynwarden-device
+UNIMIND_OIDC_ISSUER=https://auth.example.com/realms/realm
+unimind-router enrol --dynwarden-url https://dynwarden.example.com --oidc-issuer https://auth.example.com/realms/realm \
+    [--dynwarden-service NAME] [--dynwarden-profile ROLE] [--force]
+unimind-router unenrol
+```
+
+- **Config block (0.4.6+).** Instead of `UNIMIND_AUTH_MODE`, put this in `router.json`:
+  ```json
+  "enrol": {"dynwarden_url": "https://dynwarden.example.com", "issuer": "https://auth.example.com/realms/realm",
+            "service": "outside-grok", "profile": "coding-agent"}
+  ```
+  With `dynwarden_url` populated the router is a dynwarden device, and `unimind-router enrol` needs no flags. Empty or absent: normal sign-in, unchanged. If the block is present but this machine is not enrolled, the router reports `not-enrolled` and waits; it never starts enrolment on its own. An explicit `UNIMIND_AUTH_MODE`, environment variable or flag overrides the block. Adding or removing the block while running is reported as needing a restart.
+- `enrol` generates a P-256 key on this machine, sends only the public JWK to dynwarden, prints the user code and address for the owner to approve, polls, then stores the `dw-...` client id and the private key in the `dynwarden` section of `~/.unimind/config/auth.json` (0600, directory 0700, under the auth lock). A person's session in the same file is never touched. A second `enrol` is refused unless `--force`.
+- At run time the router mints access tokens with a signed client assertion (ES256, `kid` = the key id dynwarden returned, 60 s lifetime, fresh `jti`, audience = token endpoint) via `client_credentials`. There is no refresh token; tokens stay in memory and are re-minted before expiry.
+- **Fail closed:** it never falls back to Entra, MSAL, a password, `--token`, an OAuth token file or the developer key. `router_info.dynwarden` reports `ok`, `not-enrolled`, `setup-error`, `provider-unavailable`, `device-disabled`, `key-not-found` (key/kid mismatch) or `clock-skew`, without secrets. Removing or replacing the device in the file closes the socket and raises an alert.
+- The server must accept `azp` starting `dw-` (it currently allow-lists only `unimind`).
+
 ## Environment variables
 
 All of these can also go in `router.json` as `"NAME": "value"`.
@@ -419,7 +518,7 @@ All of these can also go in `router.json` as `"NAME": "value"`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `UNIMIND_SERVER` | `wss://127.0.0.1:8443/ws` | Same as `server` |
-| `UNIMIND_CLIENT_ID` | `unimind-router` | Session name prefix (a unique suffix is added per process). Its prefix picks the GitHub-token lookup order. |
+| `UNIMIND_CLIENT_ID` | `unimind-router` | The name you give this client (for example `opencode`). The server sees it as `<install-uuid>:<name>` (see *Client id and install id*). Its prefix picks the GitHub-token lookup order. |
 | `UNIMIND_PROJECT` | (none) | Project scope for the automatic `session_init` |
 | `UNIMIND_CA_CERT`, `UNIMIND_TLS_SERVER_NAME` | (none), `unimind.internal` | Verify the server certificate. Without a CA, the chain is unverified for loopback (tunnel) endpoints; the TOFU pin still applies. |
 | `UNIMIND_TLS_PIN` | `1` | TLS certificate pinning (TOFU). Same as `tls_pinning`. `unimind-router --repin [--yes]` accepts a changed certificate. |
@@ -469,7 +568,7 @@ All of these can also go in `router.json` as `"NAME": "value"`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `UNIMIND_UPLOAD_ROOTS` | cwd, workspace, temp | Extra folders (`;` or `,` separated) the AI may upload files from. Secrets folders (`.ssh`, `.azure`, keys, `.env`) are always refused. |
-| `UNIMIND_LOCAL_API_TOOLS` | `kg_add,checkpoint_save,ingest_transcript,cache_file,report_usage` | Tools that same-user local companions (the OpenCode plugins) may call through the router's local tool API, `POST /__router/tools/call` on the jLens port. Calls need the token from the discovery file and are refused from browsers (`Origin` header). `off` disables the API. Used by the Unimind OpenCode plugins. |
+| `UNIMIND_LOCAL_API_TOOLS` | `kg_add,checkpoint_save,ingest_transcript,cache_file,report_usage` | Tools that same-user local companions (the OpenCode plugins) may call through the router's local tool API, `POST /__router/tools/call` on the jLens port. Calls need the token from the discovery file and are refused from browsers (`Origin` header). `off` disables the API. See [plugins/opencode](../plugins/opencode/README.md). |
 | `UNIMIND_LOCAL_API_FILE` | `~/.unimind/run/local-api-<pid>.json` (one per router) | Discovery file (URL + token, user-only). Each router writes its own and removes it on exit; files of routers that died are removed by the next router to start. Setting this pins one fixed file instead. |
 | `UNIMIND_UPLOAD_ALLOW_ANY` | `0` | Lift the upload folder restriction (not recommended) |
 | `UNIMIND_RECV_DIR` | `~/.opencode/workspace` | Where server-pushed files land |
